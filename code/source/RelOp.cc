@@ -5,13 +5,14 @@
 #include<fstream>
 #include <map>     // for std::map
 #include <vector>   // For std::vector in Group by, for string and int types
-
+#include"BTreeIndex.h"
 #include <deque>
 #include <list>  // include the standard list header
 #include <unordered_map>
 #include "Map.h"      // for class Map<…> and KeyInt
 
 #include <unordered_set>
+#include <algorithm>
 
 
 
@@ -134,6 +135,123 @@ bool Select::GetNext(Record& _record) {
 	// if(producer->GetNext(_record)){return true;}
 	// return false;
 }
+
+//scanindex
+ScanIndex::ScanIndex(Schema& _schema,
+    CNF& _predicate,
+    Record& _constants,
+    const string& _tableName,
+    const string& indexFileName,
+    Catalog* catalog)
+: schema(_schema),
+predicate(_predicate),
+constants(_constants),
+tableName(_tableName),
+index(catalog),
+initialized(false),
+currentIndex(0) {
+
+// Read index from file
+index.Read(indexFileName);
+
+// Open the heap data file for the table
+string dataPath = "../data/" + tableName + ".heap";
+dataFile.Open(1, const_cast<char*>(dataPath.c_str()));
+}
+
+ostream& ScanIndex::print(ostream& _os) {
+    _os << "SCAN-INDEX " << tableName;
+    return _os;
+}
+
+bool ScanIndex::GetNext(Record& _record) {
+    if (!initialized) {
+        initialized = true;
+        matchingRecordIds.clear();
+
+        int lower = INT32_MIN;
+        int upper = INT32_MAX;
+        bool hasEquality = false;
+        int equalKey = -1;
+
+        for (int i = 0; i < predicate.numAnds; ++i) {
+            const Comparison& comp = predicate.andList[i];
+            if (comp.operand2 != Literal || comp.operand1 != Left) continue;
+
+            int key = *reinterpret_cast<int*>(constants.GetColumn(i));
+            switch (comp.op) {
+                case Equals:
+                    hasEquality = true;
+                    equalKey = key;
+                    break;
+                case LessThan:
+                    upper = std::min(upper, key - 1);
+                    break;
+                case GreaterThan:
+                    lower = std::max(lower, key + 1);
+                    break;
+                default:
+                    cerr << "[ScanIndex] Unsupported operator." << endl;
+                    return false;
+            }
+        }
+
+        if (hasEquality) {
+            int recId;
+            if (index.Find(equalKey, recId)) {
+                matchingRecordIds.push_back(recId);
+            }
+        } else {
+            // Range scan over all leaves
+            std::unordered_set<int> visited;
+
+            for (auto& [pid, page] : index.GetIndexMap()) {
+                if (page.pageType != IndexPage::LEAF) continue;
+                for (int i = 0; i < page.numKeys; ++i) {
+                    int k = page.keys[i];
+                    if (k > upper || k < lower) continue;
+                    int recId = page.pointers[i];
+                    if (!visited.count(recId)) {
+                        visited.insert(recId);
+                        matchingRecordIds.push_back(recId);
+                    }
+                }
+            }
+
+            // Optional: sort to return in key order
+            std::sort(matchingRecordIds.begin(), matchingRecordIds.end());
+        }
+    }
+
+    // Serve matching records one by one
+    while (currentIndex < matchingRecordIds.size()) {
+        int recId = matchingRecordIds[currentIndex++];
+        int pageId = recId / 100;
+        int slotId = recId % 100;
+
+        Page page;
+        dataFile.GetPage(page, pageId);
+
+        Record rec;
+        for (int i = 0; i <= slotId; ++i) {
+            if (!page.GetFirst(rec)) {
+                cerr << "[ScanIndex] ERROR: Record slot " << slotId << " not found in page " << pageId << endl;
+                return false;
+            }
+        }
+
+        if (predicate.Run(rec, constants)) {
+            char* bits = rec.GetBits();
+            _record.Consume(bits);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+
 
 // Helper: Convert a constant from a record into its string representation.
 std::string convertConstantToStr(Record& constants, Type attType, int index) {

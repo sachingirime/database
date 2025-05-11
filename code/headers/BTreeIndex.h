@@ -33,11 +33,16 @@ private:
 
 
 public:
+    const std::map<int, IndexPage>& GetIndexMap() const { return index; }
     BTreeIndex(Catalog* catalog);
+
+
     void Build(const std::string& indexName, const std::string& tableName, const std::string& attributeName);
     bool Find(int key, int& dataPagePointer);
     void Write();
-    void Read();
+    
+    void Read(const string& fileName);
+
     void PrintIndexStructure() const;
     void PrintPageStats() const;
     void ExportDOT(const std::string& filename) const;

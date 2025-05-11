@@ -11,6 +11,8 @@
 #include <list>
 #include <unordered_map>
 #include "Map.h"
+#include "BTreeIndex.h"
+
 using namespace std;
 //project2 = implement constructor, destructor and printing for each class - scan, select, project, join, duplicate removal, sum, group by, write out
 // in RelOp.cc file
@@ -82,6 +84,35 @@ public:
 
 	virtual ostream& print(ostream& _os);
 };
+
+class ScanIndex : public RelationalOp {
+	private:
+		Schema schema;
+		CNF predicate;
+		Record constants;
+	
+		string tableName;
+		BTreeIndex index;
+		File dataFile;
+	
+		bool initialized;
+		vector<int> matchingRecordIds;
+		size_t currentIndex;
+	
+	public:
+		ScanIndex(Schema& _schema,
+				  CNF& _predicate,
+				  Record& _constants,
+				  const string& _tableName,
+				  const string& indexFileName,
+				  Catalog* catalog);
+	
+		virtual ~ScanIndex() = default;
+	
+		bool GetNext(Record& _record) override;
+		ostream& print(ostream& _os) override;
+		void Reset();
+	};
 
 class Project : public RelationalOp {
 private:
